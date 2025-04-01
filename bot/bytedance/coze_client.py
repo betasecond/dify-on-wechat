@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from typing import List
+from typing import List, Tuple, Set
 from bot.bytedance.coze_session import CozeSession
 from pathlib import Path
 from cozepy import Coze, TokenAuth, Message, File, MessageContentType, MessageRole, MessageObjectString, \
@@ -33,6 +33,11 @@ class CozeClient(object):
                     if message.get("role") == "assistant"
                     else Message.build_user_question_text(message["content"]),
                 )
+
+        # 对 additional_messages进行去重 与 严格按照时间顺序排序(从旧到新排序)
+        # 参考 https://www.coze.com/open/docs/developer_guides/chat_v3
+        additional_messages = self.deduplicate_messages(additional_messages)  # 去重
+        additional_messages = self.sort_messages_by_timestamp(additional_messages) # 排序
 
         chat_poll = self.coze.chat.create_and_poll(
             bot_id=bot_id,
@@ -68,3 +73,40 @@ class CozeClient(object):
         valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp']
         extension = os.path.splitext(filepath)[1].lower()
         return extension in valid_extensions
+
+    def deduplicate_messages(self,messages: List[Message]) -> List[Message]:
+        """
+        对 Message 列表进行去重。
+
+        基于消息的角色、类型、内容和内容类型判断消息是否重复。
+
+        Args:
+            messages: 待去重的 Message 列表。
+
+        Returns:
+            去重后的 Message 列表。
+        """
+        seen_messages: Set[Tuple] = set()
+        unique_messages: List[Message] = []
+        for message in messages:
+            message_tuple: Tuple = (message.role, message.type, message.content, message.content_type)
+            if message_tuple not in seen_messages:
+                unique_messages.append(message)
+                seen_messages.add(message_tuple)
+        return unique_messages
+
+    def sort_messages_by_timestamp(self,messages: List[Message]) -> List[Message]:
+        """
+        对 Message 列表按照时间戳进行排序 (从旧到新)。
+
+        Args:
+            messages: 待排序的 Message 列表。
+
+        Returns:
+            按照时间戳排序后的 Message 列表 (从旧到新)。
+        """
+        def get_message_timestamp(message: Message) -> int:
+            return message.created_at if message.created_at is not None else 0
+
+        messages.sort(key=get_message_timestamp)
+        return messages
